@@ -531,6 +531,18 @@ function spawnEnemy() {
 function updateEnemies(dt) {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
+
+    // Remove hit enemies after a short timer
+    if (e.hit) {
+      if (e.removeTimer !== undefined) {
+        e.removeTimer -= dt;
+        if (e.removeTimer <= 0) {
+          enemies.splice(i, 1);
+        }
+      }
+      continue;
+    }
+
     e.y += e.speed * dt * 60;
     e.x += e.drift * dt * 60;
     // Bounce off walls
@@ -541,12 +553,10 @@ function updateEnemies(dt) {
 
     if (e.y > H() + 30) {
       enemies.splice(i, 1);
-      if (!e.hit) {
-        lives--;
-        updateHUD();
-        screenShake(8, 0.3);
-        if (lives <= 0) gameOver();
-      }
+      lives--;
+      updateHUD();
+      screenShake(8, 0.3);
+      if (lives <= 0) gameOver();
     }
   }
 }
@@ -612,16 +622,12 @@ function updateMissiles(dt) {
     if (dist < 12) {
       // Hit!
       t.hit = true;
+      t.removeTimer = 0.05;
       m.alive = false;
       spawnExplosion(t.x, t.y, t.type.color);
       score += 10 + wave * 5;
       updateHUD();
       missiles.splice(i, 1);
-      // Remove enemy after short delay
-      setTimeout(() => {
-        const idx = enemies.indexOf(t);
-        if (idx !== -1) enemies.splice(idx, 1);
-      }, 50);
       continue;
     }
 
