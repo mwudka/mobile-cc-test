@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Limb Blaster</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -17,14 +17,15 @@ body {
   user-select: none;
   display: flex;
   flex-direction: column;
-  height: 100dvh;
   height: 100vh;
+  height: 100dvh;
 }
 
 #game-container {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 canvas {
@@ -63,8 +64,8 @@ canvas {
 #onscreen-keyboard {
   display: none;
   background: #111;
-  padding: 6px;
-  gap: 6px;
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+  gap: 5px;
   z-index: 20;
   flex-shrink: 0;
 }
@@ -79,9 +80,9 @@ canvas {
   color: #0ff;
   border: 1px solid #0ff;
   border-radius: 8px;
-  font-size: 22px;
+  font-size: 20px;
   font-family: 'Courier New', monospace;
-  padding: 12px 0;
+  padding: 10px 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.1s;
@@ -159,7 +160,8 @@ canvas {
   <div id="overlay">
     <h1>Limb Blaster</h1>
     <div class="subtitle">
-      Enemies descend! Type the number of limbs<br>on a creature to fire a seeking missile.<br><br>
+      Alien creatures attack in formation!<br>
+      Type the number of limbs to fire.<br><br>
       Spider=8 &bull; Octopus=8 &bull; Human=4<br>
       Bird=2 &bull; Fish=0 &bull; Insect=6
     </div>
@@ -183,14 +185,26 @@ canvas {
 
 <script>
 // --- Constants ---
-const ENEMY_SPEED_BASE = 0.4;
-const ENEMY_SPEED_WAVE_MULT = 0.06;
 const MISSILE_SPEED = 6;
-const SPAWN_INTERVAL_BASE = 2200;
-const SPAWN_INTERVAL_MIN = 600;
-const SPAWN_INTERVAL_WAVE_REDUCTION = 150;
 const PLAYER_LIVES = 3;
 const STAR_COUNT = 120;
+
+// Formation constants
+const FORMATION_COLS = 8;
+const FORMATION_ROWS = 4;
+const FORMATION_CELL_W = 52;
+const FORMATION_CELL_H = 48;
+const FORMATION_TOP_MARGIN = 50;
+const FORMATION_H_SPEED_BASE = 0.4;
+const FORMATION_H_SPEED_WAVE = 0.08;
+const FORMATION_DESCENT_STEP = 12;
+
+// Dive attack constants
+const DIVE_SPEED_BASE = 2.5;
+const DIVE_SPEED_WAVE = 0.3;
+const DIVE_INTERVAL_BASE = 3000;
+const DIVE_INTERVAL_MIN = 800;
+const DIVE_INTERVAL_WAVE_REDUCTION = 200;
 
 // --- Canvas setup ---
 const canvas = document.getElementById('game');
@@ -223,13 +237,25 @@ let score = 0;
 let wave = 1;
 let lives = PLAYER_LIVES;
 let gameRunning = false;
-let spawnTimer = 0;
-let waveEnemiesSpawned = 0;
-let waveEnemiesNeeded = 5;
-let waveTransition = 0;
 let inputBuffer = '';
 let lastTime = 0;
 let playerY = 0;
+
+// Formation state
+let formationX = 0;        // center X offset of the formation
+let formationDir = 1;       // 1 = right, -1 = left
+let formationBaseY = 0;     // current top of formation (descends when hitting edges)
+let formationSpeed = 0;
+let formationDescended = false; // flag to descend once per edge hit
+
+// Dive state
+let diveTimer = 0;
+let waveTransition = 0;
+let waveCleared = false;
+
+// Entry animation state
+let entryQueue = [];        // enemies waiting to fly in
+let entryActive = [];       // enemies currently flying to their slot
 
 // --- Stars background ---
 function initStars() {
@@ -252,18 +278,15 @@ const ENEMY_TYPES = [
     name: 'Fish', limbs: 0, color: '#4488ff', width: 44, height: 22,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Body
       ctx.beginPath();
       ctx.ellipse(x, y, w / 2, h / 2, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Tail
       ctx.beginPath();
       ctx.moveTo(x + w / 2, y);
       ctx.lineTo(x + w / 2 + 10, y - 8);
       ctx.lineTo(x + w / 2 + 10, y + 8);
       ctx.closePath();
       ctx.fill();
-      // Eye
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(x - w / 4, y - 2, 3, 0, Math.PI * 2);
@@ -278,11 +301,9 @@ const ENEMY_TYPES = [
     name: 'Bird', limbs: 2, color: '#ff6644', width: 40, height: 28,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Body
       ctx.beginPath();
       ctx.ellipse(x, y, w / 3, h / 3, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Wings
       const wingFlap = Math.sin(t * 8) * 6;
       ctx.beginPath();
       ctx.moveTo(x - 5, y);
@@ -296,7 +317,6 @@ const ENEMY_TYPES = [
       ctx.lineTo(x + w / 4, y + 2);
       ctx.closePath();
       ctx.fill();
-      // Legs (2 limbs)
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -305,7 +325,6 @@ const ENEMY_TYPES = [
       ctx.moveTo(x + 4, y + h / 3);
       ctx.lineTo(x + 6, y + h / 2 + 4);
       ctx.stroke();
-      // Eye
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(x, y - 3, 2.5, 0, Math.PI * 2);
@@ -320,18 +339,15 @@ const ENEMY_TYPES = [
     name: 'Human', limbs: 4, color: '#ffaa33', width: 28, height: 44,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Head
       ctx.beginPath();
       ctx.arc(x, y - h / 3, 7, 0, Math.PI * 2);
       ctx.fill();
-      // Body
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(x, y - h / 3 + 7);
       ctx.lineTo(x, y + 4);
       ctx.stroke();
-      // Arms (2 limbs)
       const armSwing = Math.sin(t * 4) * 8;
       ctx.beginPath();
       ctx.moveTo(x, y - h / 6);
@@ -339,14 +355,12 @@ const ENEMY_TYPES = [
       ctx.moveTo(x, y - h / 6);
       ctx.lineTo(x + 12, y - h / 6 + 10 - armSwing);
       ctx.stroke();
-      // Legs (2 limbs)
       ctx.beginPath();
       ctx.moveTo(x, y + 4);
       ctx.lineTo(x - 8, y + h / 2.5);
       ctx.moveTo(x, y + 4);
       ctx.lineTo(x + 8, y + h / 2.5);
       ctx.stroke();
-      // Eyes
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(x - 2.5, y - h / 3 - 1, 1.5, 0, Math.PI * 2);
@@ -358,14 +372,12 @@ const ENEMY_TYPES = [
     name: 'Insect', limbs: 6, color: '#66ff44', width: 32, height: 24,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Body segments
       ctx.beginPath();
       ctx.ellipse(x - 6, y, 6, 5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
       ctx.ellipse(x + 4, y, 8, 6, 0, 0, Math.PI * 2);
       ctx.fill();
-      // 6 legs
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 1.5;
       const legWiggle = Math.sin(t * 10) * 3;
@@ -380,14 +392,12 @@ const ENEMY_TYPES = [
         ctx.lineTo(lx + 6, y + 12 + (i % 2 === 0 ? -legWiggle : legWiggle));
         ctx.stroke();
       }
-      // Antennae
       ctx.beginPath();
       ctx.moveTo(x - 8, y - 4);
       ctx.lineTo(x - 14, y - 12);
       ctx.moveTo(x - 4, y - 4);
       ctx.lineTo(x - 8, y - 14);
       ctx.stroke();
-      // Eyes
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(x - 9, y - 2, 2, 0, Math.PI * 2);
@@ -399,22 +409,18 @@ const ENEMY_TYPES = [
     name: 'Spider', limbs: 8, color: '#cc44ff', width: 38, height: 34,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Body
       ctx.beginPath();
       ctx.arc(x, y, 8, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
       ctx.ellipse(x, y + 8, 6, 8, 0, 0, Math.PI * 2);
       ctx.fill();
-      // 8 legs
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 1.5;
       const legAnim = Math.sin(t * 8) * 4;
       for (let i = 0; i < 4; i++) {
         const angle = (-0.8 + i * 0.45);
         const knee = 12;
-        const foot = 20;
-        // Left legs
         const lkx = x - Math.cos(angle) * knee;
         const lky = y + Math.sin(angle) * knee + (i % 2 === 0 ? legAnim : -legAnim);
         ctx.beginPath();
@@ -422,7 +428,6 @@ const ENEMY_TYPES = [
         ctx.lineTo(lkx - 4, lky);
         ctx.lineTo(lkx - 8, lky + 8);
         ctx.stroke();
-        // Right legs
         const rkx = x + Math.cos(angle) * knee;
         const rky = y + Math.sin(angle) * knee + (i % 2 === 0 ? -legAnim : legAnim);
         ctx.beginPath();
@@ -431,7 +436,6 @@ const ENEMY_TYPES = [
         ctx.lineTo(rkx + 8, rky + 8);
         ctx.stroke();
       }
-      // Eyes (multiple for spider)
       ctx.fillStyle = '#f44';
       for (let i = 0; i < 4; i++) {
         ctx.beginPath();
@@ -444,29 +448,26 @@ const ENEMY_TYPES = [
     name: 'Octopus', limbs: 8, color: '#ff44aa', width: 40, height: 42,
     draw(x, y, w, h, t) {
       ctx.fillStyle = this.color;
-      // Head (dome)
       ctx.beginPath();
       ctx.ellipse(x, y - 6, 14, 12, 0, Math.PI, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
       ctx.ellipse(x, y - 2, 14, 6, 0, 0, Math.PI);
       ctx.fill();
-      // 8 tentacles
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
       for (let i = 0; i < 8; i++) {
         const baseX = x - 12 + i * 3.4;
         const tentLen = 16;
-        const wave = Math.sin(t * 4 + i * 0.8) * 5;
-        const wave2 = Math.cos(t * 3 + i * 1.2) * 3;
+        const wv = Math.sin(t * 4 + i * 0.8) * 5;
+        const wv2 = Math.cos(t * 3 + i * 1.2) * 3;
         ctx.beginPath();
         ctx.moveTo(baseX, y + 2);
-        ctx.quadraticCurveTo(baseX + wave, y + 10, baseX + wave2, y + tentLen + 4);
+        ctx.quadraticCurveTo(baseX + wv, y + 10, baseX + wv2, y + tentLen + 4);
         ctx.stroke();
       }
       ctx.lineCap = 'butt';
-      // Eyes
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.ellipse(x - 5, y - 6, 4, 5, 0, 0, Math.PI * 2);
@@ -496,7 +497,6 @@ function drawPlayer(t) {
   ctx.closePath();
   ctx.fill();
 
-  // Thruster glow
   const flicker = Math.sin(t * 20) * 2;
   ctx.fillStyle = `rgba(0, 255, 255, 0.4)`;
   ctx.beginPath();
@@ -507,32 +507,262 @@ function drawPlayer(t) {
   ctx.fill();
 }
 
-// --- Enemy management ---
-function spawnEnemy() {
-  const type = ENEMY_TYPES[Math.floor(Math.random() * ENEMY_TYPES.length)];
-  const margin = 40;
-  const x = margin + Math.random() * (W() - margin * 2);
-  const speed = ENEMY_SPEED_BASE + wave * ENEMY_SPEED_WAVE_MULT;
-  // Slight horizontal drift
-  const drift = (Math.random() - 0.5) * 0.3;
+// --- Formation helpers ---
 
-  enemies.push({
-    x, y: -30,
-    type,
-    speed,
-    drift,
-    spawnTime: performance.now() / 1000,
-    hit: false,
-    flash: 0
-  });
-  waveEnemiesSpawned++;
+// Get the world position of a formation slot
+function getFormationSlotPos(row, col) {
+  const totalW = FORMATION_COLS * FORMATION_CELL_W;
+  const centerX = W() / 2 + formationX;
+  const startX = centerX - totalW / 2;
+  const x = startX + col * FORMATION_CELL_W + FORMATION_CELL_W / 2;
+  const y = FORMATION_TOP_MARGIN + formationBaseY + row * FORMATION_CELL_H + FORMATION_CELL_H / 2;
+  return { x, y };
 }
 
+// Build the enemy grid for a wave
+function buildFormation() {
+  enemies = [];
+  entryQueue = [];
+  entryActive = [];
+
+  // Determine how many rows to fill based on wave
+  const rows = Math.min(FORMATION_ROWS, 2 + Math.floor(wave / 2));
+  const cols = Math.min(FORMATION_COLS, 4 + Math.min(4, wave));
+
+  // Center the columns
+  const colOffset = Math.floor((FORMATION_COLS - cols) / 2);
+
+  // Pick enemy types for each row (variety increases with wave)
+  const availableTypes = ENEMY_TYPES.slice();
+
+  // Build the formation - queue them for entry animation
+  for (let r = 0; r < rows; r++) {
+    // Each row gets 1-2 random types
+    const rowType = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+    for (let c = 0; c < cols; c++) {
+      // Occasionally mix in a different type
+      let type = rowType;
+      if (Math.random() < 0.25) {
+        type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+      }
+
+      const enemy = {
+        row: r,
+        col: c + colOffset,
+        type,
+        hit: false,
+        flash: 0,
+        removeTimer: undefined,
+        // State: 'entering', 'formation', 'diving', 'returning'
+        state: 'entering',
+        // For dive attacks
+        diveX: 0,
+        diveY: 0,
+        diveAngle: 0,
+        divePhase: 0,      // progress along dive path
+        diveStartX: 0,
+        diveStartY: 0,
+        spawnTime: performance.now() / 1000,
+        // Entry animation
+        entryX: 0,
+        entryY: -40,
+        entryProgress: 0,
+      };
+      entryQueue.push(enemy);
+    }
+  }
+
+  // Stagger the entry - groups fly in from top
+  // Sort by row then col for a nice sweep pattern
+  entryQueue.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
+
+  // Reset formation position
+  formationX = 0;
+  formationDir = 1;
+  formationBaseY = 0;
+  formationSpeed = FORMATION_H_SPEED_BASE + wave * FORMATION_H_SPEED_WAVE;
+  diveTimer = 2000; // grace period before first dive
+  waveCleared = false;
+}
+
+// Launch next batch from entry queue
+let entryBatchTimer = 0;
+const ENTRY_BATCH_SIZE = 4;
+const ENTRY_BATCH_DELAY = 300; // ms between batches
+
+function updateEntryQueue(dt) {
+  // Launch batches from the queue
+  entryBatchTimer -= dt * 1000;
+  if (entryBatchTimer <= 0 && entryQueue.length > 0) {
+    const batch = entryQueue.splice(0, ENTRY_BATCH_SIZE);
+    for (const e of batch) {
+      // Start from top of screen, slightly spread
+      const targetPos = getFormationSlotPos(e.row, e.col);
+      e.entryX = W() / 2 + (Math.random() - 0.5) * 100;
+      e.entryY = -30 - Math.random() * 40;
+      e.entryProgress = 0;
+      entryActive.push(e);
+      enemies.push(e);
+    }
+    entryBatchTimer = ENTRY_BATCH_DELAY;
+  }
+
+  // Animate active entries
+  for (let i = entryActive.length - 1; i >= 0; i--) {
+    const e = entryActive[i];
+    e.entryProgress += dt * 2.5; // speed of entry animation
+    if (e.entryProgress >= 1) {
+      e.entryProgress = 1;
+      e.state = 'formation';
+      entryActive.splice(i, 1);
+    }
+  }
+}
+
+// --- Formation movement ---
+function updateFormation(dt) {
+  // Move the formation side to side
+  formationX += formationSpeed * formationDir * dt * 60;
+
+  // Calculate formation bounds
+  const totalW = FORMATION_COLS * FORMATION_CELL_W;
+  const leftEdge = W() / 2 + formationX - totalW / 2;
+  const rightEdge = leftEdge + totalW;
+  const margin = 10;
+
+  // Check if we hit the edge - if so, descend and reverse
+  if (rightEdge > W() - margin && formationDir > 0) {
+    formationDir = -1;
+    formationBaseY += FORMATION_DESCENT_STEP;
+  } else if (leftEdge < margin && formationDir < 0) {
+    formationDir = 1;
+    formationBaseY += FORMATION_DESCENT_STEP;
+  }
+
+  // Check if formation has reached the player area - game over
+  const bottomRow = enemies.reduce((max, e) =>
+    (!e.hit && e.state === 'formation') ? Math.max(max, e.row) : max, -1);
+  if (bottomRow >= 0) {
+    const bottomY = FORMATION_TOP_MARGIN + formationBaseY + bottomRow * FORMATION_CELL_H + FORMATION_CELL_H;
+    if (bottomY > H() - 80) {
+      // Formation reached player - lose a life and reset formation upward
+      lives--;
+      updateHUD();
+      screenShake(12, 0.4);
+      if (lives <= 0) {
+        gameOver();
+        return;
+      }
+      formationBaseY = 0;
+    }
+  }
+}
+
+// --- Dive attacks ---
+function updateDiveAttacks(dt) {
+  diveTimer -= dt * 1000;
+
+  const formationEnemies = enemies.filter(e => !e.hit && e.state === 'formation');
+  if (formationEnemies.length === 0) return;
+
+  if (diveTimer <= 0) {
+    // Pick a random formation enemy to dive
+    const diver = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
+    const pos = getFormationSlotPos(diver.row, diver.col);
+
+    diver.state = 'diving';
+    diver.divePhase = 0;
+    diver.diveStartX = pos.x;
+    diver.diveStartY = pos.y;
+    // Aim toward player with some randomness
+    diver.diveTargetX = W() / 2 + (Math.random() - 0.5) * W() * 0.6;
+    diver.diveTargetY = H() + 60;
+
+    // How many divers at once increases with wave
+    const simultaneousDivers = Math.min(3, 1 + Math.floor(wave / 3));
+    const currentDivers = enemies.filter(e => e.state === 'diving').length;
+
+    const interval = Math.max(DIVE_INTERVAL_MIN,
+      DIVE_INTERVAL_BASE - wave * DIVE_INTERVAL_WAVE_REDUCTION);
+    diveTimer = currentDivers < simultaneousDivers ? interval * 0.3 : interval + Math.random() * 500;
+  }
+}
+
+function updateDivingEnemies(dt) {
+  const diveSpeed = DIVE_SPEED_BASE + wave * DIVE_SPEED_WAVE;
+
+  for (const e of enemies) {
+    if (e.state !== 'diving' && e.state !== 'returning') continue;
+    if (e.hit) continue;
+
+    if (e.state === 'diving') {
+      e.divePhase += dt * diveSpeed * 0.8;
+
+      // Swooping curve path
+      const t = e.divePhase;
+      const wobble = Math.sin(t * 4) * 30;
+
+      // Interpolate with curve
+      e.diveX = e.diveStartX + (e.diveTargetX - e.diveStartX) * t + wobble;
+      e.diveY = e.diveStartY + (e.diveTargetY - e.diveStartY) * t;
+
+      if (e.divePhase >= 1) {
+        // Reached bottom - lose a life
+        lives--;
+        updateHUD();
+        screenShake(8, 0.3);
+        if (lives <= 0) {
+          gameOver();
+          return;
+        }
+        // Start returning to formation
+        e.state = 'returning';
+        e.divePhase = 0;
+        const target = getFormationSlotPos(e.row, e.col);
+        e.diveStartX = e.diveX;
+        e.diveStartY = -40; // come back from top
+        e.diveTargetX = target.x;
+        e.diveTargetY = target.y;
+      }
+    } else if (e.state === 'returning') {
+      e.divePhase += dt * 2.5;
+      const t = Math.min(1, e.divePhase);
+
+      // Smooth return arc from top
+      const target = getFormationSlotPos(e.row, e.col);
+      e.diveX = e.diveStartX + (target.x - e.diveStartX) * t;
+      e.diveY = e.diveStartY + (target.y - e.diveStartY) * t;
+
+      if (e.divePhase >= 1) {
+        e.state = 'formation';
+      }
+    }
+  }
+}
+
+// --- Get world position for any enemy ---
+function getEnemyPos(e) {
+  if (e.state === 'entering') {
+    const target = getFormationSlotPos(e.row, e.col);
+    const t = e.entryProgress;
+    // Ease-out curve
+    const ease = 1 - (1 - t) * (1 - t);
+    return {
+      x: e.entryX + (target.x - e.entryX) * ease,
+      y: e.entryY + (target.y - e.entryY) * ease
+    };
+  } else if (e.state === 'formation') {
+    return getFormationSlotPos(e.row, e.col);
+  } else if (e.state === 'diving' || e.state === 'returning') {
+    return { x: e.diveX, y: e.diveY };
+  }
+  return getFormationSlotPos(e.row, e.col);
+}
+
+// --- Enemy update ---
 function updateEnemies(dt) {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
-
-    // Remove hit enemies after a short timer
     if (e.hit) {
       if (e.removeTimer !== undefined) {
         e.removeTimer -= dt;
@@ -542,53 +772,45 @@ function updateEnemies(dt) {
       }
       continue;
     }
-
-    e.y += e.speed * dt * 60;
-    e.x += e.drift * dt * 60;
-    // Bounce off walls
-    if (e.x < 20) { e.x = 20; e.drift = Math.abs(e.drift); }
-    if (e.x > W() - 20) { e.x = W() - 20; e.drift = -Math.abs(e.drift); }
-
     if (e.flash > 0) e.flash -= dt * 4;
-
-    if (e.y > H() + 30) {
-      enemies.splice(i, 1);
-      lives--;
-      updateHUD();
-      screenShake(8, 0.3);
-      if (lives <= 0) gameOver();
-    }
   }
 }
 
 function drawEnemies(t) {
   for (const e of enemies) {
     if (e.hit) continue;
+    const pos = getEnemyPos(e);
     ctx.save();
     if (e.flash > 0) {
       ctx.globalAlpha = 0.5 + 0.5 * Math.sin(e.flash * 20);
     }
-    e.type.draw(e.x, e.y, e.type.width, e.type.height, t);
+    // Slight visual indication of diving enemies
+    if (e.state === 'diving') {
+      ctx.shadowColor = '#f44';
+      ctx.shadowBlur = 10;
+    }
+    e.type.draw(pos.x, pos.y, e.type.width, e.type.height, t);
 
     // Limb count label
+    ctx.shadowBlur = 0;
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 13px Courier New';
     ctx.textAlign = 'center';
-    ctx.fillText(e.type.limbs, e.x, e.y - e.type.height / 2 - 6);
+    ctx.fillText(e.type.limbs, pos.x, pos.y - e.type.height / 2 - 6);
     ctx.restore();
   }
 }
 
 // --- Missiles ---
 function fireMissile(targetLimbs) {
-  // Find all matching enemies, target closest to bottom
   const matching = enemies
     .filter(e => e.type.limbs === targetLimbs && !e.hit)
-    .sort((a, b) => b.y - a.y);
+    .map(e => ({ enemy: e, pos: getEnemyPos(e) }))
+    .sort((a, b) => b.pos.y - a.pos.y);
 
   if (matching.length === 0) return false;
 
-  const target = matching[0];
+  const target = matching[0].enemy;
   const px = W() / 2;
 
   missiles.push({
@@ -608,24 +830,26 @@ function updateMissiles(dt) {
 
     const t = m.target;
     if (t.hit || enemies.indexOf(t) === -1) {
-      // Target gone, just fly straight up
       m.y -= MISSILE_SPEED * dt * 60;
       if (m.y < -20) { missiles.splice(i, 1); }
       continue;
     }
 
-    // Seek toward target
-    const dx = t.x - m.x;
-    const dy = t.y - m.y;
+    const tpos = getEnemyPos(t);
+    const dx = tpos.x - m.x;
+    const dy = tpos.y - m.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    if (dist < 12) {
-      // Hit!
+    if (dist < 14) {
       t.hit = true;
       t.removeTimer = 0.05;
       m.alive = false;
-      spawnExplosion(t.x, t.y, t.type.color);
+      spawnExplosion(tpos.x, tpos.y, t.type.color);
       score += 10 + wave * 5;
+      // Bonus for hitting a diving enemy
+      if (t.state === 'diving') {
+        score += 20;
+      }
       updateHUD();
       missiles.splice(i, 1);
       continue;
@@ -635,7 +859,6 @@ function updateMissiles(dt) {
     m.x += (dx / dist) * speed;
     m.y += (dy / dist) * speed;
 
-    // Trail
     m.trail.push({ x: m.x, y: m.y, life: 1 });
     if (m.trail.length > 20) m.trail.shift();
   }
@@ -643,7 +866,6 @@ function updateMissiles(dt) {
 
 function drawMissiles() {
   for (const m of missiles) {
-    // Trail
     for (let i = 0; i < m.trail.length; i++) {
       const p = m.trail[i];
       p.life -= 0.05;
@@ -652,7 +874,6 @@ function drawMissiles() {
       ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI * 2);
       ctx.fill();
     }
-    // Missile head
     ctx.fillStyle = '#ff0';
     ctx.shadowColor = '#ff0';
     ctx.shadowBlur = 8;
@@ -727,14 +948,20 @@ function screenShake(amount, duration) {
 
 // --- Wave management ---
 function checkWave() {
-  if (waveEnemiesSpawned >= waveEnemiesNeeded &&
-      enemies.filter(e => !e.hit).length === 0 &&
-      missiles.length === 0) {
+  if (waveCleared) return;
+
+  const alive = enemies.filter(e => !e.hit);
+  if (alive.length === 0 && entryQueue.length === 0 && entryActive.length === 0) {
+    waveCleared = true;
     wave++;
-    waveEnemiesSpawned = 0;
-    waveEnemiesNeeded = 5 + wave * 2;
-    waveTransition = 2;
+    waveTransition = 2.5;
     updateHUD();
+    // Build next formation after a brief delay
+    setTimeout(() => {
+      if (gameRunning) {
+        buildFormation();
+      }
+    }, 1500);
   }
 }
 
@@ -757,7 +984,6 @@ function handleDigit(digit) {
 
   const hit = fireMissile(num);
 
-  // Flash and clear
   const display = document.getElementById('input-display');
   display.style.color = hit ? '#0f0' : '#f44';
   setTimeout(() => {
@@ -794,16 +1020,11 @@ function gameLoop(timestamp) {
   const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
   lastTime = timestamp;
 
-  // Spawn enemies
-  spawnTimer -= dt * 1000;
-  if (spawnTimer <= 0 && waveEnemiesSpawned < waveEnemiesNeeded) {
-    spawnEnemy();
-    const interval = Math.max(SPAWN_INTERVAL_MIN,
-      SPAWN_INTERVAL_BASE - wave * SPAWN_INTERVAL_WAVE_REDUCTION);
-    spawnTimer = interval + Math.random() * 400;
-  }
-
   // Update
+  updateEntryQueue(dt);
+  updateFormation(dt);
+  updateDiveAttacks(dt);
+  updateDivingEnemies(dt);
   updateEnemies(dt);
   updateMissiles(dt);
   updateParticles(dt);
@@ -827,7 +1048,6 @@ function gameLoop(timestamp) {
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
-  // Clear
   ctx.fillStyle = '#0a0a2e';
   ctx.fillRect(-10, -10, W() + 20, H() + 20);
 
@@ -839,10 +1059,14 @@ function gameLoop(timestamp) {
 
   // Wave transition overlay
   if (waveTransition > 0) {
-    ctx.fillStyle = `rgba(0, 255, 255, ${Math.min(1, waveTransition)})`;
+    const alpha = Math.min(1, waveTransition);
+    ctx.fillStyle = `rgba(0, 255, 255, ${alpha})`;
     ctx.font = 'bold 28px Courier New';
     ctx.textAlign = 'center';
     ctx.fillText(`Wave ${wave}`, W() / 2, H() / 2);
+    ctx.font = '16px Courier New';
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.7})`;
+    ctx.fillText('Get ready!', W() / 2, H() / 2 + 30);
   }
 
   ctx.restore();
@@ -855,20 +1079,21 @@ function startGame() {
   enemies = [];
   missiles = [];
   particles = [];
+  entryQueue = [];
+  entryActive = [];
   score = 0;
   wave = 1;
   lives = PLAYER_LIVES;
-  spawnTimer = 0;
-  waveEnemiesSpawned = 0;
-  waveEnemiesNeeded = 5;
-  waveTransition = 2;
   inputBuffer = '';
   gameRunning = true;
+  waveTransition = 2.5;
+  entryBatchTimer = 0;
   document.getElementById('overlay').classList.add('hidden');
   document.getElementById('input-display').textContent = '';
   document.getElementById('final-score').textContent = '';
   updateHUD();
   lastTime = performance.now();
+  buildFormation();
   requestAnimationFrame(gameLoop);
 }
 
