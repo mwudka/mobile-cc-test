@@ -190,21 +190,18 @@ const PLAYER_LIVES = 3;
 const STAR_COUNT = 120;
 
 // Formation constants
-const FORMATION_COLS = 8;
-const FORMATION_ROWS = 4;
 const FORMATION_CELL_W = 52;
 const FORMATION_CELL_H = 48;
 const FORMATION_TOP_MARGIN = 50;
-const FORMATION_H_SPEED_BASE = 0.4;
-const FORMATION_H_SPEED_WAVE = 0.08;
-const FORMATION_DESCENT_STEP = 12;
+const FORMATION_H_SPEED_BASE = 0.3;
+const FORMATION_H_SPEED_WAVE = 0.04;
 
 // Dive attack constants
-const DIVE_SPEED_BASE = 2.5;
-const DIVE_SPEED_WAVE = 0.3;
-const DIVE_INTERVAL_BASE = 3000;
-const DIVE_INTERVAL_MIN = 800;
-const DIVE_INTERVAL_WAVE_REDUCTION = 200;
+const DIVE_SPEED_BASE = 0.4;
+const DIVE_SPEED_WAVE = 0.03;
+const DIVE_INTERVAL_BASE = 4500;
+const DIVE_INTERVAL_MIN = 1500;
+const DIVE_INTERVAL_WAVE_REDUCTION = 150;
 
 // --- Canvas setup ---
 const canvas = document.getElementById('game');
@@ -244,9 +241,9 @@ let playerY = 0;
 // Formation state
 let formationX = 0;        // center X offset of the formation
 let formationDir = 1;       // 1 = right, -1 = left
-let formationBaseY = 0;     // current top of formation (descends when hitting edges)
 let formationSpeed = 0;
-let formationDescended = false; // flag to descend once per edge hit
+let formationCols = 0;      // actual columns in current wave
+let formationRows = 0;      // actual rows in current wave
 
 // Dive state
 let diveTimer = 0;
@@ -511,11 +508,12 @@ function drawPlayer(t) {
 
 // Get the world position of a formation slot
 function getFormationSlotPos(row, col) {
-  const totalW = FORMATION_COLS * FORMATION_CELL_W;
+  const cellW = Math.min(FORMATION_CELL_W, (W() - 40) / Math.max(formationCols, 1));
+  const totalW = formationCols * cellW;
   const centerX = W() / 2 + formationX;
   const startX = centerX - totalW / 2;
-  const x = startX + col * FORMATION_CELL_W + FORMATION_CELL_W / 2;
-  const y = FORMATION_TOP_MARGIN + formationBaseY + row * FORMATION_CELL_H + FORMATION_CELL_H / 2;
+  const x = startX + col * cellW + cellW / 2;
+  const y = FORMATION_TOP_MARGIN + row * FORMATION_CELL_H + FORMATION_CELL_H / 2;
   return { x, y };
 }
 
@@ -525,22 +523,19 @@ function buildFormation() {
   entryQueue = [];
   entryActive = [];
 
-  // Determine how many rows to fill based on wave
-  const rows = Math.min(FORMATION_ROWS, 2 + Math.floor(wave / 2));
-  const cols = Math.min(FORMATION_COLS, 4 + Math.min(4, wave));
-
-  // Center the columns
-  const colOffset = Math.floor((FORMATION_COLS - cols) / 2);
+  // Determine how many rows/cols to fill based on wave
+  const rows = Math.min(4, 2 + Math.floor(wave / 2));
+  const cols = Math.min(8, 4 + Math.min(4, wave));
+  formationRows = rows;
+  formationCols = cols;
 
   // Pick enemy types for each row (variety increases with wave)
   const availableTypes = ENEMY_TYPES.slice();
 
   // Build the formation - queue them for entry animation
   for (let r = 0; r < rows; r++) {
-    // Each row gets 1-2 random types
     const rowType = availableTypes[Math.floor(Math.random() * availableTypes.length)];
     for (let c = 0; c < cols; c++) {
-      // Occasionally mix in a different type
       let type = rowType;
       if (Math.random() < 0.25) {
         type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
@@ -548,22 +543,18 @@ function buildFormation() {
 
       const enemy = {
         row: r,
-        col: c + colOffset,
+        col: c,
         type,
         hit: false,
         flash: 0,
         removeTimer: undefined,
-        // State: 'entering', 'formation', 'diving', 'returning'
         state: 'entering',
-        // For dive attacks
         diveX: 0,
         diveY: 0,
-        diveAngle: 0,
-        divePhase: 0,      // progress along dive path
+        divePhase: 0,
         diveStartX: 0,
         diveStartY: 0,
         spawnTime: performance.now() / 1000,
-        // Entry animation
         entryX: 0,
         entryY: -40,
         entryProgress: 0,
@@ -573,15 +564,13 @@ function buildFormation() {
   }
 
   // Stagger the entry - groups fly in from top
-  // Sort by row then col for a nice sweep pattern
   entryQueue.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
 
   // Reset formation position
   formationX = 0;
   formationDir = 1;
-  formationBaseY = 0;
   formationSpeed = FORMATION_H_SPEED_BASE + wave * FORMATION_H_SPEED_WAVE;
-  diveTimer = 2000; // grace period before first dive
+  diveTimer = 3000; // grace period before first dive
   waveCleared = false;
 }
 
@@ -624,37 +613,25 @@ function updateFormation(dt) {
   // Move the formation side to side
   formationX += formationSpeed * formationDir * dt * 60;
 
-  // Calculate formation bounds
-  const totalW = FORMATION_COLS * FORMATION_CELL_W;
-  const leftEdge = W() / 2 + formationX - totalW / 2;
-  const rightEdge = leftEdge + totalW;
-  const margin = 10;
-
-  // Check if we hit the edge - if so, descend and reverse
-  if (rightEdge > W() - margin && formationDir > 0) {
-    formationDir = -1;
-    formationBaseY += FORMATION_DESCENT_STEP;
-  } else if (leftEdge < margin && formationDir < 0) {
-    formationDir = 1;
-    formationBaseY += FORMATION_DESCENT_STEP;
+  // Compute actual bounds from living formation/entering enemies
+  let minX = Infinity, maxX = -Infinity;
+  for (const e of enemies) {
+    if (e.hit || (e.state !== 'formation' && e.state !== 'entering')) continue;
+    const pos = getFormationSlotPos(e.row, e.col);
+    const hw = (e.type.width / 2) + 8;
+    minX = Math.min(minX, pos.x - hw);
+    maxX = Math.max(maxX, pos.x + hw);
   }
 
-  // Check if formation has reached the player area - game over
-  const bottomRow = enemies.reduce((max, e) =>
-    (!e.hit && e.state === 'formation') ? Math.max(max, e.row) : max, -1);
-  if (bottomRow >= 0) {
-    const bottomY = FORMATION_TOP_MARGIN + formationBaseY + bottomRow * FORMATION_CELL_H + FORMATION_CELL_H;
-    if (bottomY > H() - 80) {
-      // Formation reached player - lose a life and reset formation upward
-      lives--;
-      updateHUD();
-      screenShake(12, 0.4);
-      if (lives <= 0) {
-        gameOver();
-        return;
-      }
-      formationBaseY = 0;
-    }
+  if (minX === Infinity) return; // no formation enemies
+
+  const margin = 8;
+  if (maxX > W() - margin && formationDir > 0) {
+    formationDir = -1;
+    formationX -= (maxX - (W() - margin)); // snap back in-bounds
+  } else if (minX < margin && formationDir < 0) {
+    formationDir = 1;
+    formationX += (margin - minX); // snap back in-bounds
   }
 }
 
@@ -678,25 +655,23 @@ function updateDiveAttacks(dt) {
     diver.diveTargetX = W() / 2 + (Math.random() - 0.5) * W() * 0.6;
     diver.diveTargetY = H() + 60;
 
-    // How many divers at once increases with wave
-    const simultaneousDivers = Math.min(3, 1 + Math.floor(wave / 3));
-    const currentDivers = enemies.filter(e => e.state === 'diving').length;
-
     const interval = Math.max(DIVE_INTERVAL_MIN,
       DIVE_INTERVAL_BASE - wave * DIVE_INTERVAL_WAVE_REDUCTION);
-    diveTimer = currentDivers < simultaneousDivers ? interval * 0.3 : interval + Math.random() * 500;
+    diveTimer = interval + Math.random() * 800;
   }
 }
 
 function updateDivingEnemies(dt) {
+  if (!gameRunning) return;
   const diveSpeed = DIVE_SPEED_BASE + wave * DIVE_SPEED_WAVE;
 
-  for (const e of enemies) {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
     if (e.state !== 'diving' && e.state !== 'returning') continue;
     if (e.hit) continue;
 
     if (e.state === 'diving') {
-      e.divePhase += dt * diveSpeed * 0.8;
+      e.divePhase += dt * diveSpeed;
 
       // Swooping curve path
       const t = e.divePhase;
@@ -725,7 +700,7 @@ function updateDivingEnemies(dt) {
         e.diveTargetY = target.y;
       }
     } else if (e.state === 'returning') {
-      e.divePhase += dt * 2.5;
+      e.divePhase += dt * 2.0;
       const t = Math.min(1, e.divePhase);
 
       // Smooth return arc from top
