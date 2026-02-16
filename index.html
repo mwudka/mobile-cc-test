@@ -806,6 +806,11 @@ function updateMissiles(dt) {
     const t = m.target;
     if (t.hit || enemies.indexOf(t) === -1) {
       m.y -= MISSILE_SPEED * dt * 60;
+      // Decay orphaned trail points
+      for (let j = m.trail.length - 1; j >= 0; j--) {
+        m.trail[j].life -= 0.05;
+        if (m.trail[j].life <= 0) m.trail.splice(j, 1);
+      }
       if (m.y < -20) { missiles.splice(i, 1); }
       continue;
     }
@@ -836,6 +841,12 @@ function updateMissiles(dt) {
 
     m.trail.push({ x: m.x, y: m.y, life: 1 });
     if (m.trail.length > 20) m.trail.shift();
+
+    // Decay trail life and remove expired points
+    for (let j = m.trail.length - 1; j >= 0; j--) {
+      m.trail[j].life -= 0.05;
+      if (m.trail[j].life <= 0) m.trail.splice(j, 1);
+    }
   }
 }
 
@@ -843,10 +854,9 @@ function drawMissiles() {
   for (const m of missiles) {
     for (let i = 0; i < m.trail.length; i++) {
       const p = m.trail[i];
-      p.life -= 0.05;
-      ctx.fillStyle = `rgba(255, 255, 0, ${p.life * 0.6})`;
+      ctx.fillStyle = `rgba(255, 255, 0, ${Math.max(0, p.life) * 0.6})`;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(0, 2 * p.life), 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = '#ff0';
@@ -887,10 +897,10 @@ function updateParticles(dt) {
 
 function drawParticles() {
   for (const p of particles) {
-    ctx.globalAlpha = p.life;
+    ctx.globalAlpha = Math.max(0, p.life);
     ctx.fillStyle = p.color;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, Math.max(0, p.size * p.life), 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
@@ -991,60 +1001,64 @@ document.querySelectorAll('#onscreen-keyboard button').forEach(btn => {
 function gameLoop(timestamp) {
   if (!gameRunning) return;
 
-  const t = timestamp / 1000;
-  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
-  lastTime = timestamp;
+  try {
+    const t = timestamp / 1000;
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+    lastTime = timestamp;
 
-  // Update
-  updateEntryQueue(dt);
-  updateFormation(dt);
-  updateDiveAttacks(dt);
-  updateDivingEnemies(dt);
-  updateEnemies(dt);
-  updateMissiles(dt);
-  updateParticles(dt);
-  checkWave();
+    // Update
+    updateEntryQueue(dt);
+    updateFormation(dt);
+    updateDiveAttacks(dt);
+    updateDivingEnemies(dt);
+    updateEnemies(dt);
+    updateMissiles(dt);
+    updateParticles(dt);
+    checkWave();
 
-  // Screen shake
-  let shakeX = 0, shakeY = 0;
-  if (shakeDuration > 0) {
-    shakeDuration -= dt;
-    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
-    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
-    shakeAmount *= 0.95;
+    // Screen shake
+    let shakeX = 0, shakeY = 0;
+    if (shakeDuration > 0) {
+      shakeDuration -= dt;
+      shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+      shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+      shakeAmount *= 0.95;
+    }
+
+    // Wave transition text
+    if (waveTransition > 0) {
+      waveTransition -= dt;
+    }
+
+    // Draw
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    ctx.fillStyle = '#0a0a2e';
+    ctx.fillRect(-10, -10, W() + 20, H() + 20);
+
+    drawStars(dt);
+    drawEnemies(t);
+    drawMissiles();
+    drawParticles();
+    drawPlayer(t);
+
+    // Wave transition overlay
+    if (waveTransition > 0) {
+      const alpha = Math.min(1, waveTransition);
+      ctx.fillStyle = `rgba(0, 255, 255, ${alpha})`;
+      ctx.font = 'bold 28px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Wave ${wave}`, W() / 2, H() / 2);
+      ctx.font = '16px Courier New';
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.7})`;
+      ctx.fillText('Get ready!', W() / 2, H() / 2 + 30);
+    }
+
+    ctx.restore();
+  } catch (err) {
+    console.error('Game loop error:', err);
   }
-
-  // Wave transition text
-  if (waveTransition > 0) {
-    waveTransition -= dt;
-  }
-
-  // Draw
-  ctx.save();
-  ctx.translate(shakeX, shakeY);
-
-  ctx.fillStyle = '#0a0a2e';
-  ctx.fillRect(-10, -10, W() + 20, H() + 20);
-
-  drawStars(dt);
-  drawEnemies(t);
-  drawMissiles();
-  drawParticles();
-  drawPlayer(t);
-
-  // Wave transition overlay
-  if (waveTransition > 0) {
-    const alpha = Math.min(1, waveTransition);
-    ctx.fillStyle = `rgba(0, 255, 255, ${alpha})`;
-    ctx.font = 'bold 28px Courier New';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Wave ${wave}`, W() / 2, H() / 2);
-    ctx.font = '16px Courier New';
-    ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.7})`;
-    ctx.fillText('Get ready!', W() / 2, H() / 2 + 30);
-  }
-
-  ctx.restore();
 
   requestAnimationFrame(gameLoop);
 }
