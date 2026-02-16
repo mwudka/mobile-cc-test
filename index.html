@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Limb Blaster</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0a2e;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  height: 100vh;
+}
+
+#game-container {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  color: #0ff;
+  font-size: 16px;
+  text-shadow: 0 0 8px #0ff;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#input-display {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ff0;
+  font-size: 28px;
+  text-shadow: 0 0 12px #ff0;
+  pointer-events: none;
+  z-index: 10;
+  min-height: 36px;
+}
+
+#onscreen-keyboard {
+  display: none;
+  background: #111;
+  padding: 6px;
+  gap: 6px;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+#onscreen-keyboard.visible {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+
+#onscreen-keyboard button {
+  background: #1a1a4e;
+  color: #0ff;
+  border: 1px solid #0ff;
+  border-radius: 8px;
+  font-size: 22px;
+  font-family: 'Courier New', monospace;
+  padding: 12px 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+
+#onscreen-keyboard button:active {
+  background: #0ff;
+  color: #000;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 30;
+}
+
+#overlay.hidden { display: none; }
+
+#overlay h1 {
+  color: #0ff;
+  font-size: 36px;
+  text-shadow: 0 0 20px #0ff;
+  margin-bottom: 8px;
+}
+
+#overlay .subtitle {
+  color: #aaa;
+  font-size: 14px;
+  margin-bottom: 24px;
+  text-align: center;
+  padding: 0 20px;
+  line-height: 1.5;
+}
+
+#overlay .final-score {
+  color: #ff0;
+  font-size: 22px;
+  margin-bottom: 16px;
+  text-shadow: 0 0 10px #ff0;
+}
+
+#overlay button {
+  background: none;
+  border: 2px solid #0ff;
+  color: #0ff;
+  font-family: 'Courier New', monospace;
+  font-size: 20px;
+  padding: 12px 32px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+#overlay button:hover, #overlay button:active {
+  background: #0ff;
+  color: #000;
+}
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <span id="score-display">Score: 0</span>
+    <span id="wave-display">Wave: 1</span>
+    <span id="lives-display">Lives: 3</span>
+  </div>
+  <div id="input-display"></div>
+  <div id="overlay">
+    <h1>Limb Blaster</h1>
+    <div class="subtitle">
+      Enemies descend! Type the number of limbs<br>on a creature to fire a seeking missile.<br><br>
+      Spider=8 &bull; Octopus=8 &bull; Human=4<br>
+      Bird=2 &bull; Fish=0 &bull; Insect=6
+    </div>
+    <div class="final-score" id="final-score"></div>
+    <button id="start-btn">Start</button>
+  </div>
+</div>
+
+<div id="onscreen-keyboard">
+  <button data-key="0">0</button>
+  <button data-key="1">1</button>
+  <button data-key="2">2</button>
+  <button data-key="3">3</button>
+  <button data-key="4">4</button>
+  <button data-key="5">5</button>
+  <button data-key="6">6</button>
+  <button data-key="7">7</button>
+  <button data-key="8">8</button>
+  <button data-key="9">9</button>
+</div>
+
+<script>
+// --- Constants ---
+const ENEMY_SPEED_BASE = 0.4;
+const ENEMY_SPEED_WAVE_MULT = 0.06;
+const MISSILE_SPEED = 6;
+const SPAWN_INTERVAL_BASE = 2200;
+const SPAWN_INTERVAL_MIN = 600;
+const SPAWN_INTERVAL_WAVE_REDUCTION = 150;
+const PLAYER_LIVES = 3;
+const STAR_COUNT = 120;
+
+// --- Canvas setup ---
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const container = document.getElementById('game-container');
+
+function resize() {
+  canvas.width = container.clientWidth * devicePixelRatio;
+  canvas.height = container.clientHeight * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = () => container.clientWidth;
+const H = () => container.clientHeight;
+
+// --- Detect mobile ---
+const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+if (isMobile) {
+  document.getElementById('onscreen-keyboard').classList.add('visible');
+}
+
+// --- Game state ---
+let enemies = [];
+let missiles = [];
+let particles = [];
+let stars = [];
+let score = 0;
+let wave = 1;
+let lives = PLAYER_LIVES;
+let gameRunning = false;
+let spawnTimer = 0;
+let waveEnemiesSpawned = 0;
+let waveEnemiesNeeded = 5;
+let waveTransition = 0;
+let inputBuffer = '';
+let lastTime = 0;
+let playerY = 0;
+
+// --- Stars background ---
+function initStars() {
+  stars = [];
+  for (let i = 0; i < STAR_COUNT; i++) {
+    stars.push({
+      x: Math.random() * 1000,
+      y: Math.random() * 1000,
+      size: Math.random() * 1.5 + 0.5,
+      speed: Math.random() * 0.3 + 0.1,
+      brightness: Math.random()
+    });
+  }
+}
+initStars();
+
+// --- Enemy types ---
+const ENEMY_TYPES = [
+  {
+    name: 'Fish', limbs: 0, color: '#4488ff', width: 44, height: 22,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Body
+      ctx.beginPath();
+      ctx.ellipse(x, y, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Tail
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w / 2 + 10, y - 8);
+      ctx.lineTo(x + w / 2 + 10, y + 8);
+      ctx.closePath();
+      ctx.fill();
+      // Eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x - w / 4, y - 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(x - w / 4, y - 2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'Bird', limbs: 2, color: '#ff6644', width: 40, height: 28,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Body
+      ctx.beginPath();
+      ctx.ellipse(x, y, w / 3, h / 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Wings
+      const wingFlap = Math.sin(t * 8) * 6;
+      ctx.beginPath();
+      ctx.moveTo(x - 5, y);
+      ctx.lineTo(x - w / 2 - 4, y - 10 + wingFlap);
+      ctx.lineTo(x - w / 4, y + 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(x + 5, y);
+      ctx.lineTo(x + w / 2 + 4, y - 10 + wingFlap);
+      ctx.lineTo(x + w / 4, y + 2);
+      ctx.closePath();
+      ctx.fill();
+      // Legs (2 limbs)
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, y + h / 3);
+      ctx.lineTo(x - 6, y + h / 2 + 4);
+      ctx.moveTo(x + 4, y + h / 3);
+      ctx.lineTo(x + 6, y + h / 2 + 4);
+      ctx.stroke();
+      // Eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x, y - 3, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(x, y - 3, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'Human', limbs: 4, color: '#ffaa33', width: 28, height: 44,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Head
+      ctx.beginPath();
+      ctx.arc(x, y - h / 3, 7, 0, Math.PI * 2);
+      ctx.fill();
+      // Body
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y - h / 3 + 7);
+      ctx.lineTo(x, y + 4);
+      ctx.stroke();
+      // Arms (2 limbs)
+      const armSwing = Math.sin(t * 4) * 8;
+      ctx.beginPath();
+      ctx.moveTo(x, y - h / 6);
+      ctx.lineTo(x - 12, y - h / 6 + 10 + armSwing);
+      ctx.moveTo(x, y - h / 6);
+      ctx.lineTo(x + 12, y - h / 6 + 10 - armSwing);
+      ctx.stroke();
+      // Legs (2 limbs)
+      ctx.beginPath();
+      ctx.moveTo(x, y + 4);
+      ctx.lineTo(x - 8, y + h / 2.5);
+      ctx.moveTo(x, y + 4);
+      ctx.lineTo(x + 8, y + h / 2.5);
+      ctx.stroke();
+      // Eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x - 2.5, y - h / 3 - 1, 1.5, 0, Math.PI * 2);
+      ctx.arc(x + 2.5, y - h / 3 - 1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'Insect', limbs: 6, color: '#66ff44', width: 32, height: 24,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Body segments
+      ctx.beginPath();
+      ctx.ellipse(x - 6, y, 6, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(x + 4, y, 8, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 6 legs
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 1.5;
+      const legWiggle = Math.sin(t * 10) * 3;
+      for (let i = 0; i < 3; i++) {
+        const lx = x - 4 + i * 6;
+        ctx.beginPath();
+        ctx.moveTo(lx, y + 4);
+        ctx.lineTo(lx - 6, y + 12 + (i % 2 === 0 ? legWiggle : -legWiggle));
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(lx, y + 4);
+        ctx.lineTo(lx + 6, y + 12 + (i % 2 === 0 ? -legWiggle : legWiggle));
+        ctx.stroke();
+      }
+      // Antennae
+      ctx.beginPath();
+      ctx.moveTo(x - 8, y - 4);
+      ctx.lineTo(x - 14, y - 12);
+      ctx.moveTo(x - 4, y - 4);
+      ctx.lineTo(x - 8, y - 14);
+      ctx.stroke();
+      // Eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x - 9, y - 2, 2, 0, Math.PI * 2);
+      ctx.arc(x - 4, y - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'Spider', limbs: 8, color: '#cc44ff', width: 38, height: 34,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Body
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(x, y + 8, 6, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 8 legs
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 1.5;
+      const legAnim = Math.sin(t * 8) * 4;
+      for (let i = 0; i < 4; i++) {
+        const angle = (-0.8 + i * 0.45);
+        const knee = 12;
+        const foot = 20;
+        // Left legs
+        const lkx = x - Math.cos(angle) * knee;
+        const lky = y + Math.sin(angle) * knee + (i % 2 === 0 ? legAnim : -legAnim);
+        ctx.beginPath();
+        ctx.moveTo(x - 4, y - 2 + i * 4);
+        ctx.lineTo(lkx - 4, lky);
+        ctx.lineTo(lkx - 8, lky + 8);
+        ctx.stroke();
+        // Right legs
+        const rkx = x + Math.cos(angle) * knee;
+        const rky = y + Math.sin(angle) * knee + (i % 2 === 0 ? -legAnim : legAnim);
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y - 2 + i * 4);
+        ctx.lineTo(rkx + 4, rky);
+        ctx.lineTo(rkx + 8, rky + 8);
+        ctx.stroke();
+      }
+      // Eyes (multiple for spider)
+      ctx.fillStyle = '#f44';
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(x - 4 + (i % 2) * 8, y - 4 + Math.floor(i / 2) * 4, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  },
+  {
+    name: 'Octopus', limbs: 8, color: '#ff44aa', width: 40, height: 42,
+    draw(x, y, w, h, t) {
+      ctx.fillStyle = this.color;
+      // Head (dome)
+      ctx.beginPath();
+      ctx.ellipse(x, y - 6, 14, 12, 0, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(x, y - 2, 14, 6, 0, 0, Math.PI);
+      ctx.fill();
+      // 8 tentacles
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 8; i++) {
+        const baseX = x - 12 + i * 3.4;
+        const tentLen = 16;
+        const wave = Math.sin(t * 4 + i * 0.8) * 5;
+        const wave2 = Math.cos(t * 3 + i * 1.2) * 3;
+        ctx.beginPath();
+        ctx.moveTo(baseX, y + 2);
+        ctx.quadraticCurveTo(baseX + wave, y + 10, baseX + wave2, y + tentLen + 4);
+        ctx.stroke();
+      }
+      ctx.lineCap = 'butt';
+      // Eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.ellipse(x - 5, y - 6, 4, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(x + 5, y - 6, 4, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(x - 5, y - 5, 2, 0, Math.PI * 2);
+      ctx.arc(x + 5, y - 5, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+];
+
+// --- Player ship ---
+function drawPlayer(t) {
+  const px = W() / 2;
+  playerY = H() - 40;
+
+  ctx.fillStyle = '#0ff';
+  ctx.beginPath();
+  ctx.moveTo(px, playerY - 16);
+  ctx.lineTo(px - 14, playerY + 10);
+  ctx.lineTo(px + 14, playerY + 10);
+  ctx.closePath();
+  ctx.fill();
+
+  // Thruster glow
+  const flicker = Math.sin(t * 20) * 2;
+  ctx.fillStyle = `rgba(0, 255, 255, 0.4)`;
+  ctx.beginPath();
+  ctx.moveTo(px - 6, playerY + 10);
+  ctx.lineTo(px, playerY + 18 + flicker);
+  ctx.lineTo(px + 6, playerY + 10);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// --- Enemy management ---
+function spawnEnemy() {
+  const type = ENEMY_TYPES[Math.floor(Math.random() * ENEMY_TYPES.length)];
+  const margin = 40;
+  const x = margin + Math.random() * (W() - margin * 2);
+  const speed = ENEMY_SPEED_BASE + wave * ENEMY_SPEED_WAVE_MULT;
+  // Slight horizontal drift
+  const drift = (Math.random() - 0.5) * 0.3;
+
+  enemies.push({
+    x, y: -30,
+    type,
+    speed,
+    drift,
+    spawnTime: performance.now() / 1000,
+    hit: false,
+    flash: 0
+  });
+  waveEnemiesSpawned++;
+}
+
+function updateEnemies(dt) {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.y += e.speed * dt * 60;
+    e.x += e.drift * dt * 60;
+    // Bounce off walls
+    if (e.x < 20) { e.x = 20; e.drift = Math.abs(e.drift); }
+    if (e.x > W() - 20) { e.x = W() - 20; e.drift = -Math.abs(e.drift); }
+
+    if (e.flash > 0) e.flash -= dt * 4;
+
+    if (e.y > H() + 30) {
+      enemies.splice(i, 1);
+      if (!e.hit) {
+        lives--;
+        updateHUD();
+        screenShake(8, 0.3);
+        if (lives <= 0) gameOver();
+      }
+    }
+  }
+}
+
+function drawEnemies(t) {
+  for (const e of enemies) {
+    if (e.hit) continue;
+    ctx.save();
+    if (e.flash > 0) {
+      ctx.globalAlpha = 0.5 + 0.5 * Math.sin(e.flash * 20);
+    }
+    e.type.draw(e.x, e.y, e.type.width, e.type.height, t);
+
+    // Limb count label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(e.type.limbs, e.x, e.y - e.type.height / 2 - 6);
+    ctx.restore();
+  }
+}
+
+// --- Missiles ---
+function fireMissile(targetLimbs) {
+  // Find all matching enemies, target closest to bottom
+  const matching = enemies
+    .filter(e => e.type.limbs === targetLimbs && !e.hit)
+    .sort((a, b) => b.y - a.y);
+
+  if (matching.length === 0) return false;
+
+  const target = matching[0];
+  const px = W() / 2;
+
+  missiles.push({
+    x: px, y: playerY - 16,
+    target,
+    trail: [],
+    alive: true
+  });
+
+  return true;
+}
+
+function updateMissiles(dt) {
+  for (let i = missiles.length - 1; i >= 0; i--) {
+    const m = missiles[i];
+    if (!m.alive) { missiles.splice(i, 1); continue; }
+
+    const t = m.target;
+    if (t.hit || enemies.indexOf(t) === -1) {
+      // Target gone, just fly straight up
+      m.y -= MISSILE_SPEED * dt * 60;
+      if (m.y < -20) { missiles.splice(i, 1); }
+      continue;
+    }
+
+    // Seek toward target
+    const dx = t.x - m.x;
+    const dy = t.y - m.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 12) {
+      // Hit!
+      t.hit = true;
+      m.alive = false;
+      spawnExplosion(t.x, t.y, t.type.color);
+      score += 10 + wave * 5;
+      updateHUD();
+      missiles.splice(i, 1);
+      // Remove enemy after short delay
+      setTimeout(() => {
+        const idx = enemies.indexOf(t);
+        if (idx !== -1) enemies.splice(idx, 1);
+      }, 50);
+      continue;
+    }
+
+    const speed = MISSILE_SPEED * dt * 60;
+    m.x += (dx / dist) * speed;
+    m.y += (dy / dist) * speed;
+
+    // Trail
+    m.trail.push({ x: m.x, y: m.y, life: 1 });
+    if (m.trail.length > 20) m.trail.shift();
+  }
+}
+
+function drawMissiles() {
+  for (const m of missiles) {
+    // Trail
+    for (let i = 0; i < m.trail.length; i++) {
+      const p = m.trail[i];
+      p.life -= 0.05;
+      ctx.fillStyle = `rgba(255, 255, 0, ${p.life * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Missile head
+    ctx.fillStyle = '#ff0';
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+// --- Particles / Explosions ---
+function spawnExplosion(x, y, color) {
+  for (let i = 0; i < 20; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      color,
+      size: Math.random() * 3 + 1
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.y += p.vy * dt * 60;
+    p.life -= dt * 2;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// --- Starfield ---
+function drawStars(dt) {
+  for (const s of stars) {
+    s.y += s.speed * dt * 60;
+    if (s.y > 1000) { s.y = 0; s.x = Math.random() * 1000; }
+    s.brightness += (Math.random() - 0.5) * 0.1;
+    s.brightness = Math.max(0.2, Math.min(1, s.brightness));
+
+    const sx = (s.x / 1000) * W();
+    const sy = (s.y / 1000) * H();
+    ctx.fillStyle = `rgba(255, 255, 255, ${s.brightness * 0.7})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, s.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// --- Screen shake ---
+let shakeAmount = 0;
+let shakeDuration = 0;
+function screenShake(amount, duration) {
+  shakeAmount = amount;
+  shakeDuration = duration;
+}
+
+// --- Wave management ---
+function checkWave() {
+  if (waveEnemiesSpawned >= waveEnemiesNeeded &&
+      enemies.filter(e => !e.hit).length === 0 &&
+      missiles.length === 0) {
+    wave++;
+    waveEnemiesSpawned = 0;
+    waveEnemiesNeeded = 5 + wave * 2;
+    waveTransition = 2;
+    updateHUD();
+  }
+}
+
+// --- HUD ---
+function updateHUD() {
+  document.getElementById('score-display').textContent = `Score: ${score}`;
+  document.getElementById('wave-display').textContent = `Wave: ${wave}`;
+  document.getElementById('lives-display').textContent = `Lives: ${'♥'.repeat(Math.max(0, lives))}`;
+}
+
+// --- Input handling ---
+function handleDigit(digit) {
+  if (!gameRunning) return;
+
+  const num = parseInt(digit);
+  if (isNaN(num)) return;
+
+  inputBuffer = digit;
+  document.getElementById('input-display').textContent = digit;
+
+  const hit = fireMissile(num);
+
+  // Flash and clear
+  const display = document.getElementById('input-display');
+  display.style.color = hit ? '#0f0' : '#f44';
+  setTimeout(() => {
+    inputBuffer = '';
+    display.textContent = '';
+    display.style.color = '#ff0';
+  }, 300);
+}
+
+// Desktop keyboard
+document.addEventListener('keydown', (e) => {
+  if (e.key >= '0' && e.key <= '9') {
+    handleDigit(e.key);
+  }
+});
+
+// Mobile on-screen keyboard
+document.querySelectorAll('#onscreen-keyboard button').forEach(btn => {
+  btn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    handleDigit(btn.dataset.key);
+  });
+  btn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    handleDigit(btn.dataset.key);
+  });
+});
+
+// --- Game loop ---
+function gameLoop(timestamp) {
+  if (!gameRunning) return;
+
+  const t = timestamp / 1000;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+
+  // Spawn enemies
+  spawnTimer -= dt * 1000;
+  if (spawnTimer <= 0 && waveEnemiesSpawned < waveEnemiesNeeded) {
+    spawnEnemy();
+    const interval = Math.max(SPAWN_INTERVAL_MIN,
+      SPAWN_INTERVAL_BASE - wave * SPAWN_INTERVAL_WAVE_REDUCTION);
+    spawnTimer = interval + Math.random() * 400;
+  }
+
+  // Update
+  updateEnemies(dt);
+  updateMissiles(dt);
+  updateParticles(dt);
+  checkWave();
+
+  // Screen shake
+  let shakeX = 0, shakeY = 0;
+  if (shakeDuration > 0) {
+    shakeDuration -= dt;
+    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+    shakeAmount *= 0.95;
+  }
+
+  // Wave transition text
+  if (waveTransition > 0) {
+    waveTransition -= dt;
+  }
+
+  // Draw
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // Clear
+  ctx.fillStyle = '#0a0a2e';
+  ctx.fillRect(-10, -10, W() + 20, H() + 20);
+
+  drawStars(dt);
+  drawEnemies(t);
+  drawMissiles();
+  drawParticles();
+  drawPlayer(t);
+
+  // Wave transition overlay
+  if (waveTransition > 0) {
+    ctx.fillStyle = `rgba(0, 255, 255, ${Math.min(1, waveTransition)})`;
+    ctx.font = 'bold 28px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Wave ${wave}`, W() / 2, H() / 2);
+  }
+
+  ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Start / Restart ---
+function startGame() {
+  enemies = [];
+  missiles = [];
+  particles = [];
+  score = 0;
+  wave = 1;
+  lives = PLAYER_LIVES;
+  spawnTimer = 0;
+  waveEnemiesSpawned = 0;
+  waveEnemiesNeeded = 5;
+  waveTransition = 2;
+  inputBuffer = '';
+  gameRunning = true;
+  document.getElementById('overlay').classList.add('hidden');
+  document.getElementById('input-display').textContent = '';
+  document.getElementById('final-score').textContent = '';
+  updateHUD();
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  gameRunning = false;
+  const overlay = document.getElementById('overlay');
+  overlay.querySelector('h1').textContent = 'Game Over';
+  document.getElementById('final-score').textContent = `Final Score: ${score}`;
+  document.getElementById('start-btn').textContent = 'Retry';
+  overlay.classList.remove('hidden');
+}
+
+// --- Start button ---
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('start-btn').addEventListener('touchend', (e) => {
+  e.preventDefault();
+  startGame();
+});
+
+// Initial HUD
+updateHUD();
+</script>
+</body>
+</html>
