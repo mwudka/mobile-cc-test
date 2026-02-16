@@ -713,16 +713,28 @@ function updateDivingEnemies(dt) {
       e.diveX = e.diveStartX + (e.diveTargetX - e.diveStartX) * t + wobble;
       e.diveY = e.diveStartY + (e.diveTargetY - e.diveStartY) * t;
 
-      if (e.divePhase >= 1) {
-        // Reached bottom - lose a life
+      // Check collision with player ship
+      const dx = Math.abs(e.diveX - playerX);
+      const dy = Math.abs(e.diveY - playerY);
+      const hitW = (e.type.width + 28) / 2;  // enemy half-width + ship half-width
+      const hitH = (e.type.height + 26) / 2;
+      if (dx < hitW && dy < hitH) {
+        // Hit the player
         lives--;
         updateHUD();
-        screenShake(8, 0.3);
+        screenShake(12, 0.4);
+        e.hit = true;
+        e.removeTimer = 0.05;
+        spawnExplosion(e.diveX, e.diveY, e.type.color);
         if (lives <= 0) {
           gameOver();
           return;
         }
-        // Start returning to formation
+        continue;
+      }
+
+      if (e.divePhase >= 1) {
+        // Missed the player - return to formation
         e.state = 'returning';
         e.divePhase = 0;
         const target = getFormationSlotPos(e.row, e.col);
