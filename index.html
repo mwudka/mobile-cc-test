@@ -236,7 +236,11 @@ let lives = PLAYER_LIVES;
 let gameRunning = false;
 let inputBuffer = '';
 let lastTime = 0;
+let playerX = 0;
 let playerY = 0;
+let playerTargetX = null;  // for touch-to-move (null = no touch active)
+const keysDown = new Set();
+const PLAYER_SPEED = 4;    // pixels per frame at 60fps
 
 // Formation state
 let formationX = 0;        // center X offset of the formation
@@ -482,9 +486,37 @@ const ENEMY_TYPES = [
 ];
 
 // --- Player ship ---
-function drawPlayer(t) {
-  const px = W() / 2;
+function updatePlayer(dt) {
   playerY = H() - 40;
+
+  // Keyboard movement
+  let moveDir = 0;
+  if (keysDown.has('ArrowLeft'))  moveDir -= 1;
+  if (keysDown.has('ArrowRight')) moveDir += 1;
+
+  if (moveDir !== 0) {
+    playerX += moveDir * PLAYER_SPEED * dt * 60;
+    playerTargetX = null; // keyboard overrides touch
+  }
+
+  // Touch-to-move: glide toward tap position
+  if (playerTargetX !== null) {
+    const dx = playerTargetX - playerX;
+    if (Math.abs(dx) < 2) {
+      playerX = playerTargetX;
+      playerTargetX = null;
+    } else {
+      playerX += Math.sign(dx) * Math.min(Math.abs(dx), PLAYER_SPEED * 1.5 * dt * 60);
+    }
+  }
+
+  // Clamp to screen bounds
+  const margin = 16;
+  playerX = Math.max(margin, Math.min(W() - margin, playerX));
+}
+
+function drawPlayer(t) {
+  const px = playerX;
 
   ctx.fillStyle = '#0ff';
   ctx.beginPath();
@@ -786,7 +818,7 @@ function fireMissile(targetLimbs) {
   if (matching.length === 0) return false;
 
   const target = matching[0].enemy;
-  const px = W() / 2;
+  const px = playerX;
 
   missiles.push({
     x: px, y: playerY - 16,
@@ -983,6 +1015,38 @@ document.addEventListener('keydown', (e) => {
   if (e.key >= '0' && e.key <= '9') {
     handleDigit(e.key);
   }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    keysDown.add(e.key);
+  }
+});
+document.addEventListener('keyup', (e) => {
+  keysDown.delete(e.key);
+});
+
+// Touch/click to move ship on the game canvas
+canvas.addEventListener('touchstart', (e) => {
+  if (!gameRunning) return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / container.clientWidth;
+  playerTargetX = (e.touches[0].clientX - rect.left) / scaleX;
+});
+canvas.addEventListener('touchmove', (e) => {
+  if (!gameRunning) return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / container.clientWidth;
+  playerTargetX = (e.touches[0].clientX - rect.left) / scaleX;
+});
+canvas.addEventListener('touchend', () => {
+  // Keep gliding to last target, don't snap-clear
+});
+canvas.addEventListener('mousedown', (e) => {
+  if (!gameRunning) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / container.clientWidth;
+  playerTargetX = (e.clientX - rect.left) / scaleX;
 });
 
 // Mobile on-screen keyboard
@@ -1007,6 +1071,7 @@ function gameLoop(timestamp) {
     lastTime = timestamp;
 
     // Update
+    updatePlayer(dt);
     updateEntryQueue(dt);
     updateFormation(dt);
     updateDiveAttacks(dt);
@@ -1075,6 +1140,9 @@ function startGame() {
   lives = PLAYER_LIVES;
   inputBuffer = '';
   gameRunning = true;
+  playerX = W() / 2;
+  playerTargetX = null;
+  keysDown.clear();
   waveTransition = 2.5;
   entryBatchTimer = 0;
   document.getElementById('overlay').classList.add('hidden');
