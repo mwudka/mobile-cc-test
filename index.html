@@ -264,24 +264,60 @@ let entryActive = [];       // enemies currently flying to their slot
 function initStars() {
   stars = [];
   for (let i = 0; i < STAR_COUNT; i++) {
+    // Assign to one of three depth layers
+    const layer = Math.random();
+    let depth, size, speed, brightness;
+    if (layer < 0.5) {
+      // Far stars: tiny, slow, dim (50% of stars)
+      depth = 0;
+      size = 0.4 + Math.random() * 0.4;
+      speed = 0.03 + Math.random() * 0.04;
+      brightness = 0.15 + Math.random() * 0.2;
+    } else if (layer < 0.82) {
+      // Mid stars (32%)
+      depth = 1;
+      size = 0.8 + Math.random() * 0.7;
+      speed = 0.15 + Math.random() * 0.15;
+      brightness = 0.35 + Math.random() * 0.3;
+    } else {
+      // Near stars: bigger, fast, bright (18%)
+      depth = 2;
+      size = 1.4 + Math.random() * 1.2;
+      speed = 0.4 + Math.random() * 0.4;
+      brightness = 0.7 + Math.random() * 0.3;
+    }
     stars.push({
       x: Math.random() * 1000,
       y: Math.random() * 1000,
-      size: Math.random() * 1.5 + 0.5,
-      speed: Math.random() * 0.3 + 0.1,
-      brightness: Math.random()
+      size, speed, brightness, depth
     });
   }
 }
 initStars();
 
 // --- Background space objects ---
-const BG_OBJECT_TYPES = ['planet', 'nebula', 'asteroid', 'comet'];
-const BG_SPAWN_INTERVAL = 8000; // ms between spawn attempts
+// Weighted spawn table: comets are rare
+const BG_OBJECT_WEIGHTS = [
+  { kind: 'planet',   weight: 35 },
+  { kind: 'nebula',   weight: 30 },
+  { kind: 'asteroid', weight: 28 },
+  { kind: 'comet',    weight: 7 },
+];
+const BG_TOTAL_WEIGHT = BG_OBJECT_WEIGHTS.reduce((s, w) => s + w.weight, 0);
+function pickBgKind() {
+  let r = Math.random() * BG_TOTAL_WEIGHT;
+  for (const w of BG_OBJECT_WEIGHTS) {
+    r -= w.weight;
+    if (r <= 0) return w.kind;
+  }
+  return 'planet';
+}
+
+const BG_SPAWN_INTERVAL = 8000;
 let bgSpawnTimer = 3000;
 
 function spawnBgObject(startOffscreen) {
-  const kind = BG_OBJECT_TYPES[Math.floor(Math.random() * BG_OBJECT_TYPES.length)];
+  const kind = pickBgKind();
   const obj = {
     kind,
     x: Math.random() * 1000,
@@ -329,11 +365,13 @@ function updateBgObjects(dt) {
   for (let i = bgObjects.length - 1; i >= 0; i--) {
     const o = bgObjects[i];
     o.y += o.speed * dt * 60;
+    if (o.kind === 'asteroid') o.rotation += o.rotSpeed * dt;
     if (o.y > 1100) bgObjects.splice(i, 1);
   }
 }
 
 function drawBgObjects(t) {
+  ctx.save();
   for (const o of bgObjects) {
     const sx = (o.x / 1000) * W();
     const sy = (o.y / 1000) * H();
@@ -374,8 +412,7 @@ function drawBgObjects(t) {
         ctx.fill();
       }
     } else if (o.kind === 'asteroid') {
-      // Irregular rocky shape
-      o.rotation += o.rotSpeed * dt;
+      // Irregular rocky shape (rotation updated in updateBgObjects)
       ctx.fillStyle = '#665544';
       ctx.beginPath();
       const n = o.points.length;
@@ -421,8 +458,8 @@ function drawBgObjects(t) {
       ctx.lineTo(tailX, tailY);
       ctx.stroke();
     }
-    ctx.globalAlpha = 1;
   }
+  ctx.restore();
 }
 
 // --- Enemy types ---
