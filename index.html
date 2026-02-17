@@ -186,7 +186,7 @@ canvas {
 <script>
 // --- Constants ---
 const MISSILE_SPEED = 6;
-const PLAYER_LIVES = 3;
+const PLAYER_LIVES = 5;
 const STAR_COUNT = 120;
 
 // Formation constants
@@ -817,7 +817,7 @@ function drawEnemies(t) {
     if (e.hit) continue;
     const pos = getEnemyPos(e);
     // Skip off-screen enemies to prevent ghost trails
-    if (pos.y > H() + 40 || pos.y < -60 || pos.x < -60 || pos.x > W() + 60) continue;
+    if (pos.y > H() + 5 || pos.y < -60 || pos.x < -60 || pos.x > W() + 60) continue;
     ctx.save();
     if (e.flash > 0) {
       ctx.globalAlpha = 0.5 + 0.5 * Math.sin(e.flash * 20);
@@ -1138,7 +1138,7 @@ function gameLoop(timestamp) {
     ctx.translate(shakeX, shakeY);
 
     ctx.fillStyle = '#0a0a2e';
-    ctx.fillRect(-10, -10, W() + 20, H() + 20);
+    ctx.fillRect(-100, -100, W() + 200, H() + 200);
 
     drawStars(dt);
     drawEnemies(t);
