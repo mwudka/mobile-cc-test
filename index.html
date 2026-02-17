@@ -230,6 +230,7 @@ let enemies = [];
 let missiles = [];
 let particles = [];
 let stars = [];
+let bgObjects = [];
 let score = 0;
 let wave = 1;
 let lives = PLAYER_LIVES;
@@ -273,6 +274,156 @@ function initStars() {
   }
 }
 initStars();
+
+// --- Background space objects ---
+const BG_OBJECT_TYPES = ['planet', 'nebula', 'asteroid', 'comet'];
+const BG_SPAWN_INTERVAL = 8000; // ms between spawn attempts
+let bgSpawnTimer = 3000;
+
+function spawnBgObject(startOffscreen) {
+  const kind = BG_OBJECT_TYPES[Math.floor(Math.random() * BG_OBJECT_TYPES.length)];
+  const obj = {
+    kind,
+    x: Math.random() * 1000,
+    y: startOffscreen ? -100 : Math.random() * 1000,
+    speed: 0.04 + Math.random() * 0.06,
+    opacity: 0.12 + Math.random() * 0.15,
+    seed: Math.random() * 1000
+  };
+  if (kind === 'planet') {
+    obj.radius = 18 + Math.random() * 30;
+    obj.color1 = ['#664422', '#886644', '#446688', '#668844', '#884466'][Math.floor(Math.random() * 5)];
+    obj.color2 = ['#332211', '#443322', '#223344', '#334422', '#442233'][Math.floor(Math.random() * 5)];
+    obj.hasRing = Math.random() > 0.6;
+  } else if (kind === 'nebula') {
+    obj.radius = 40 + Math.random() * 60;
+    obj.hue = Math.floor(Math.random() * 360);
+  } else if (kind === 'asteroid') {
+    obj.radius = 4 + Math.random() * 8;
+    obj.speed = 0.08 + Math.random() * 0.1;
+    obj.rotation = Math.random() * Math.PI * 2;
+    obj.rotSpeed = (Math.random() - 0.5) * 2;
+    obj.points = [];
+    const n = 6 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) {
+      obj.points.push(0.7 + Math.random() * 0.3);
+    }
+  } else if (kind === 'comet') {
+    obj.radius = 3 + Math.random() * 3;
+    obj.speed = 0.15 + Math.random() * 0.1;
+    obj.tailLen = 40 + Math.random() * 60;
+    obj.angle = 0.3 + Math.random() * 0.4; // slight diagonal
+  }
+  bgObjects.push(obj);
+}
+
+// Seed a couple on init
+for (let i = 0; i < 3; i++) spawnBgObject(false);
+
+function updateBgObjects(dt) {
+  bgSpawnTimer -= dt * 1000;
+  if (bgSpawnTimer <= 0 && bgObjects.length < 6) {
+    spawnBgObject(true);
+    bgSpawnTimer = BG_SPAWN_INTERVAL + Math.random() * 4000;
+  }
+  for (let i = bgObjects.length - 1; i >= 0; i--) {
+    const o = bgObjects[i];
+    o.y += o.speed * dt * 60;
+    if (o.y > 1100) bgObjects.splice(i, 1);
+  }
+}
+
+function drawBgObjects(t) {
+  for (const o of bgObjects) {
+    const sx = (o.x / 1000) * W();
+    const sy = (o.y / 1000) * H();
+    ctx.globalAlpha = o.opacity;
+
+    if (o.kind === 'planet') {
+      // Planet body with gradient
+      const grad = ctx.createRadialGradient(sx - o.radius * 0.3, sy - o.radius * 0.3, o.radius * 0.1, sx, sy, o.radius);
+      grad.addColorStop(0, o.color1);
+      grad.addColorStop(1, o.color2);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, o.radius, 0, Math.PI * 2);
+      ctx.fill();
+      // Optional ring
+      if (o.hasRing) {
+        ctx.strokeStyle = o.color1;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = o.opacity * 0.6;
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, o.radius * 1.6, o.radius * 0.3, 0.3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = o.opacity;
+      }
+    } else if (o.kind === 'nebula') {
+      // Soft glowing cloud with multiple circles
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2 + o.seed;
+        const offX = Math.cos(angle) * o.radius * 0.3;
+        const offY = Math.sin(angle) * o.radius * 0.3;
+        const r = o.radius * (0.5 + Math.sin(o.seed + i) * 0.3);
+        const grad = ctx.createRadialGradient(sx + offX, sy + offY, 0, sx + offX, sy + offY, r);
+        grad.addColorStop(0, `hsla(${o.hue + i * 20}, 70%, 50%, 0.15)`);
+        grad.addColorStop(1, `hsla(${o.hue + i * 20}, 70%, 30%, 0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(sx + offX, sy + offY, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (o.kind === 'asteroid') {
+      // Irregular rocky shape
+      o.rotation += o.rotSpeed * dt;
+      ctx.fillStyle = '#665544';
+      ctx.beginPath();
+      const n = o.points.length;
+      for (let i = 0; i < n; i++) {
+        const a = o.rotation + (i / n) * Math.PI * 2;
+        const r = o.radius * o.points[i];
+        const px = sx + Math.cos(a) * r;
+        const py = sy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // Highlight edge
+      ctx.strokeStyle = '#887766';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    } else if (o.kind === 'comet') {
+      // Glowing head
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, o.radius * 2);
+      grad.addColorStop(0, 'rgba(200, 220, 255, 0.8)');
+      grad.addColorStop(1, 'rgba(100, 150, 255, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, o.radius * 2, 0, Math.PI * 2);
+      ctx.fill();
+      // Core
+      ctx.fillStyle = '#ddeeff';
+      ctx.beginPath();
+      ctx.arc(sx, sy, o.radius * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      // Tail
+      const tailX = sx - Math.sin(o.angle) * o.tailLen;
+      const tailY = sy - o.tailLen;
+      const tGrad = ctx.createLinearGradient(sx, sy, tailX, tailY);
+      tGrad.addColorStop(0, 'rgba(150, 180, 255, 0.4)');
+      tGrad.addColorStop(1, 'rgba(100, 140, 255, 0)');
+      ctx.strokeStyle = tGrad;
+      ctx.lineWidth = o.radius * 1.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(tailX, tailY);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
 
 // --- Enemy types ---
 const ENEMY_TYPES = [
@@ -866,7 +1017,8 @@ function fireMissile(targetLimbs) {
     x: px, y: playerY - 16,
     target,
     trail: [],
-    alive: true
+    alive: true,
+    age: 0
   });
 
   return true;
@@ -910,8 +1062,20 @@ function updateMissiles(dt) {
     }
 
     const speed = MISSILE_SPEED * dt * 60;
-    m.x += (dx / dist) * speed;
-    m.y += (dy / dist) * speed;
+    // Move along the direction to target
+    const ndx = dx / dist;
+    const ndy = dy / dist;
+    m.x += ndx * speed;
+    m.y += ndy * speed;
+
+    // Serpentine offset perpendicular to travel direction
+    m.age += dt;
+    const serpAmp = 12;
+    const serpFreq = 18;
+    const serpOffset = Math.sin(m.age * serpFreq) * serpAmp * dt;
+    // Perpendicular vector is (-ndy, ndx)
+    m.x += -ndy * serpOffset;
+    m.y += ndx * serpOffset;
 
     m.trail.push({ x: m.x, y: m.y, life: 1 });
     if (m.trail.length > 20) m.trail.shift();
@@ -1128,6 +1292,7 @@ function gameLoop(timestamp) {
     updateEnemies(dt);
     updateMissiles(dt);
     updateParticles(dt);
+    updateBgObjects(dt);
     checkWave();
 
     // Screen shake
@@ -1152,6 +1317,7 @@ function gameLoop(timestamp) {
     ctx.fillRect(-100, -100, W() + 200, H() + 200);
 
     drawStars(dt);
+    drawBgObjects(t);
     drawEnemies(t);
     drawMissiles();
     drawParticles();
