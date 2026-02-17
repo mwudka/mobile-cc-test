@@ -1070,13 +1070,9 @@ function updateMissiles(dt) {
 
     const t = m.target;
     if (t.hit || enemies.indexOf(t) === -1) {
-      m.y -= MISSILE_SPEED * dt * 60;
-      // Decay orphaned trail points
-      for (let j = m.trail.length - 1; j >= 0; j--) {
-        m.trail[j].life -= 0.05;
-        if (m.trail[j].life <= 0) m.trail.splice(j, 1);
-      }
-      if (m.y < -20) { missiles.splice(i, 1); }
+      // Target destroyed — self destruct
+      spawnExplosion(m.x, m.y, '#ffaa44');
+      missiles.splice(i, 1);
       continue;
     }
 
