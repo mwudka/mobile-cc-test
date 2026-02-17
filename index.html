@@ -691,17 +691,21 @@ function updateDiveAttacks(dt) {
   if (formationEnemies.length === 0) return;
 
   if (diveTimer <= 0) {
-    // Pick a random formation enemy to dive
-    const diver = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
-    const pos = getFormationSlotPos(diver.row, diver.col);
+    // Launch wave-number of enemies at once
+    const count = Math.min(wave, formationEnemies.length);
+    // Shuffle to pick random divers
+    const shuffled = formationEnemies.sort(() => Math.random() - 0.5);
+    for (let d = 0; d < count; d++) {
+      const diver = shuffled[d];
+      const pos = getFormationSlotPos(diver.row, diver.col);
 
-    diver.state = 'diving';
-    diver.divePhase = 0;
-    diver.diveStartX = pos.x;
-    diver.diveStartY = pos.y;
-    // Aim toward player with some randomness
-    diver.diveTargetX = W() / 2 + (Math.random() - 0.5) * W() * 0.6;
-    diver.diveTargetY = H() + 60;
+      diver.state = 'diving';
+      diver.divePhase = 0;
+      diver.diveStartX = pos.x;
+      diver.diveStartY = pos.y;
+      diver.diveTargetX = playerX + (Math.random() - 0.5) * 60;
+      diver.diveTargetY = H() + 60;
+    }
 
     const interval = Math.max(DIVE_INTERVAL_MIN,
       DIVE_INTERVAL_BASE - wave * DIVE_INTERVAL_WAVE_REDUCTION);
@@ -720,6 +724,10 @@ function updateDivingEnemies(dt) {
 
     if (e.state === 'diving') {
       e.divePhase += dt * diveSpeed;
+
+      // Gently steer toward player's current X (tracking factor)
+      const trackStrength = 1.5 * dt;
+      e.diveTargetX += (playerX - e.diveTargetX) * trackStrength;
 
       // Swooping curve path
       const t = e.divePhase;
