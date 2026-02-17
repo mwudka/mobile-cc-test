@@ -193,12 +193,12 @@ const STAR_COUNT = 120;
 const FORMATION_CELL_W = 52;
 const FORMATION_CELL_H = 48;
 const FORMATION_TOP_MARGIN = 50;
-const FORMATION_H_SPEED_BASE = 0.3;
-const FORMATION_H_SPEED_WAVE = 0.04;
+const FORMATION_H_SPEED_BASE = 0.15;
+const FORMATION_H_SPEED_WAVE = 0.02;
 
 // Dive attack constants
-const DIVE_SPEED_BASE = 0.4;
-const DIVE_SPEED_WAVE = 0.03;
+const DIVE_SPEED_BASE = 0.2;
+const DIVE_SPEED_WAVE = 0.015;
 const DIVE_INTERVAL_BASE = 4500;
 const DIVE_INTERVAL_MIN = 1500;
 const DIVE_INTERVAL_WAVE_REDUCTION = 150;
@@ -239,6 +239,7 @@ let lastTime = 0;
 let playerX = 0;
 let playerY = 0;
 let playerTargetX = null;  // for touch-to-move (null = no touch active)
+let playerTargetY = null;
 const keysDown = new Set();
 const PLAYER_SPEED = 4;    // pixels per frame at 60fps
 
@@ -487,16 +488,19 @@ const ENEMY_TYPES = [
 
 // --- Player ship ---
 function updatePlayer(dt) {
-  playerY = H() - 40;
-
   // Keyboard movement
-  let moveDir = 0;
-  if (keysDown.has('ArrowLeft'))  moveDir -= 1;
-  if (keysDown.has('ArrowRight')) moveDir += 1;
+  let moveDirX = 0;
+  let moveDirY = 0;
+  if (keysDown.has('ArrowLeft'))  moveDirX -= 1;
+  if (keysDown.has('ArrowRight')) moveDirX += 1;
+  if (keysDown.has('ArrowUp'))    moveDirY -= 1;
+  if (keysDown.has('ArrowDown'))  moveDirY += 1;
 
-  if (moveDir !== 0) {
-    playerX += moveDir * PLAYER_SPEED * dt * 60;
+  if (moveDirX !== 0 || moveDirY !== 0) {
+    playerX += moveDirX * PLAYER_SPEED * dt * 60;
+    playerY += moveDirY * PLAYER_SPEED * dt * 60;
     playerTargetX = null; // keyboard overrides touch
+    playerTargetY = null;
   }
 
   // Touch-to-move: glide toward tap position
@@ -509,10 +513,22 @@ function updatePlayer(dt) {
       playerX += Math.sign(dx) * Math.min(Math.abs(dx), PLAYER_SPEED * 1.5 * dt * 60);
     }
   }
+  if (playerTargetY !== null) {
+    const dy = playerTargetY - playerY;
+    if (Math.abs(dy) < 2) {
+      playerY = playerTargetY;
+      playerTargetY = null;
+    } else {
+      playerY += Math.sign(dy) * Math.min(Math.abs(dy), PLAYER_SPEED * 1.5 * dt * 60);
+    }
+  }
 
   // Clamp to screen bounds
   const margin = 16;
+  const topLimit = H() * 0.5;  // can't go above halfway
+  const bottomLimit = H() - 20;
   playerX = Math.max(margin, Math.min(W() - margin, playerX));
+  playerY = Math.max(topLimit, Math.min(bottomLimit, playerY));
 }
 
 function drawPlayer(t) {
@@ -726,6 +742,7 @@ function updateDivingEnemies(dt) {
         e.hit = true;
         e.removeTimer = 0.05;
         spawnExplosion(e.diveX, e.diveY, e.type.color);
+        spawnExplosion(playerX, playerY, '#0ff');  // player ship explosion
         if (lives <= 0) {
           gameOver();
           return;
@@ -799,6 +816,8 @@ function drawEnemies(t) {
   for (const e of enemies) {
     if (e.hit) continue;
     const pos = getEnemyPos(e);
+    // Skip off-screen enemies to prevent ghost trails
+    if (pos.y > H() + 40 || pos.y < -60 || pos.x < -60 || pos.x > W() + 60) continue;
     ctx.save();
     if (e.flash > 0) {
       ctx.globalAlpha = 0.5 + 0.5 * Math.sin(e.flash * 20);
@@ -1027,7 +1046,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key >= '0' && e.key <= '9') {
     handleDigit(e.key);
   }
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+      e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
     keysDown.add(e.key);
   }
@@ -1042,14 +1062,18 @@ canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
   const scaleX = rect.width / container.clientWidth;
+  const scaleY = rect.height / container.clientHeight;
   playerTargetX = (e.touches[0].clientX - rect.left) / scaleX;
+  playerTargetY = (e.touches[0].clientY - rect.top) / scaleY;
 });
 canvas.addEventListener('touchmove', (e) => {
   if (!gameRunning) return;
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
   const scaleX = rect.width / container.clientWidth;
+  const scaleY = rect.height / container.clientHeight;
   playerTargetX = (e.touches[0].clientX - rect.left) / scaleX;
+  playerTargetY = (e.touches[0].clientY - rect.top) / scaleY;
 });
 canvas.addEventListener('touchend', () => {
   // Keep gliding to last target, don't snap-clear
@@ -1058,7 +1082,9 @@ canvas.addEventListener('mousedown', (e) => {
   if (!gameRunning) return;
   const rect = canvas.getBoundingClientRect();
   const scaleX = rect.width / container.clientWidth;
+  const scaleY = rect.height / container.clientHeight;
   playerTargetX = (e.clientX - rect.left) / scaleX;
+  playerTargetY = (e.clientY - rect.top) / scaleY;
 });
 
 // Mobile on-screen keyboard
@@ -1153,7 +1179,9 @@ function startGame() {
   inputBuffer = '';
   gameRunning = true;
   playerX = W() / 2;
+  playerY = H() - 40;
   playerTargetX = null;
+  playerTargetY = null;
   keysDown.clear();
   waveTransition = 2.5;
   entryBatchTimer = 0;
@@ -1167,6 +1195,9 @@ function startGame() {
 }
 
 function gameOver() {
+  // Big explosion at player position on final death
+  spawnExplosion(playerX, playerY, '#0ff');
+  spawnExplosion(playerX, playerY, '#fff');
   gameRunning = false;
   const overlay = document.getElementById('overlay');
   overlay.querySelector('h1').textContent = 'Game Over';
