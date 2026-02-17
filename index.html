@@ -1041,13 +1041,15 @@ function fireMissile(targetLimbs) {
   const alreadyTargeted = new Set(missiles.filter(m => m.alive).map(m => m.target));
 
   const matching = enemies
-    .filter(e => e.type.limbs === targetLimbs && !e.hit && !alreadyTargeted.has(e))
+    .filter(e => e.type.limbs === targetLimbs && !e.hit)
     .map(e => ({ enemy: e, pos: getEnemyPos(e) }))
     .sort((a, b) => b.pos.y - a.pos.y);
 
   if (matching.length === 0) return false;
 
-  const target = matching[0].enemy;
+  // Prefer enemies without a missile already in flight, but allow duplicates
+  const untargeted = matching.filter(m => !alreadyTargeted.has(m.enemy));
+  const target = (untargeted.length > 0 ? untargeted[0] : matching[0]).enemy;
   const px = playerX;
 
   missiles.push({
