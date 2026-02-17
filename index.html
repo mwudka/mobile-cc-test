@@ -193,15 +193,15 @@ const STAR_COUNT = 120;
 const FORMATION_CELL_W = 52;
 const FORMATION_CELL_H = 48;
 const FORMATION_TOP_MARGIN = 50;
-const FORMATION_H_SPEED_BASE = 0.15;
-const FORMATION_H_SPEED_WAVE = 0.02;
+const FORMATION_H_SPEED_BASE = 0.08;
+const FORMATION_H_SPEED_WAVE = 0.012;
 
 // Dive attack constants
-const DIVE_SPEED_BASE = 0.2;
-const DIVE_SPEED_WAVE = 0.015;
-const DIVE_INTERVAL_BASE = 4500;
-const DIVE_INTERVAL_MIN = 1500;
-const DIVE_INTERVAL_WAVE_REDUCTION = 150;
+const DIVE_SPEED_BASE = 0.12;
+const DIVE_SPEED_WAVE = 0.008;
+const DIVE_INTERVAL_BASE = 5500;
+const DIVE_INTERVAL_MIN = 2000;
+const DIVE_INTERVAL_WAVE_REDUCTION = 120;
 
 // --- Canvas setup ---
 const canvas = document.getElementById('game');
@@ -849,8 +849,11 @@ function drawEnemies(t) {
 
 // --- Missiles ---
 function fireMissile(targetLimbs) {
+  // Collect enemies already targeted by in-flight missiles
+  const alreadyTargeted = new Set(missiles.filter(m => m.alive).map(m => m.target));
+
   const matching = enemies
-    .filter(e => e.type.limbs === targetLimbs && !e.hit)
+    .filter(e => e.type.limbs === targetLimbs && !e.hit && !alreadyTargeted.has(e))
     .map(e => ({ enemy: e, pos: getEnemyPos(e) }))
     .sort((a, b) => b.pos.y - a.pos.y);
 
