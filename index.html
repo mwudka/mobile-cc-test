@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Limb Blaster</title>
+<title>Mathgala</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -107,10 +107,17 @@ canvas {
 #overlay.hidden { display: none; }
 
 #overlay h1 {
+  font-family: 'Courier New', monospace;
+  font-size: 56px;
+  font-style: italic;
   color: #0ff;
-  font-size: 36px;
-  text-shadow: 0 0 20px #0ff;
-  margin-bottom: 8px;
+  text-shadow: 0 0 20px #0ff, 0 0 40px #0af;
+  margin-bottom: 12px;
+  letter-spacing: 6px;
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+  image-rendering: pixelated;
 }
 
 #overlay .subtitle {
@@ -158,7 +165,7 @@ canvas {
   </div>
   <div id="input-display"></div>
   <div id="overlay">
-    <h1>Limb Blaster</h1>
+    <h1>Mathgala</h1>
     <div class="subtitle">
       Alien creatures attack in formation!<br>
       Type the number of limbs to fire.<br><br>
