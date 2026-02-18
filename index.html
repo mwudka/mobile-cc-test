@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Mathgala</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -107,17 +110,17 @@ canvas {
 #overlay.hidden { display: none; }
 
 #overlay h1 {
-  font-family: 'Courier New', monospace;
-  font-size: 56px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 36px;
   font-style: italic;
   color: #0ff;
-  text-shadow: 0 0 20px #0ff, 0 0 40px #0af;
-  margin-bottom: 12px;
-  letter-spacing: 6px;
-  text-rendering: optimizeSpeed;
-  -webkit-font-smoothing: none;
-  -moz-osx-font-smoothing: unset;
-  image-rendering: pixelated;
+  text-shadow:
+    3px 3px 0 #066,
+    0 0 20px #0ff,
+    0 0 40px #0af,
+    0 0 80px rgba(0,255,255,0.3);
+  margin-bottom: 16px;
+  letter-spacing: 4px;
 }
 
 #overlay .subtitle {
@@ -728,21 +731,103 @@ function updatePlayer(dt) {
 
 function drawPlayer(t) {
   const px = playerX;
+  const py = playerY;
 
+  // Main fuselage
   ctx.fillStyle = '#0ff';
   ctx.beginPath();
-  ctx.moveTo(px, playerY - 16);
-  ctx.lineTo(px - 14, playerY + 10);
-  ctx.lineTo(px + 14, playerY + 10);
+  ctx.moveTo(px, py - 22);       // nose
+  ctx.lineTo(px - 8, py - 4);    // left shoulder
+  ctx.lineTo(px - 8, py + 12);   // left base
+  ctx.lineTo(px + 8, py + 12);   // right base
+  ctx.lineTo(px + 8, py - 4);    // right shoulder
   ctx.closePath();
   ctx.fill();
 
-  const flicker = Math.sin(t * 20) * 2;
-  ctx.fillStyle = `rgba(0, 255, 255, 0.4)`;
+  // Left wing
+  ctx.fillStyle = '#08cccc';
   ctx.beginPath();
-  ctx.moveTo(px - 6, playerY + 10);
-  ctx.lineTo(px, playerY + 18 + flicker);
-  ctx.lineTo(px + 6, playerY + 10);
+  ctx.moveTo(px - 8, py - 2);
+  ctx.lineTo(px - 20, py + 10);
+  ctx.lineTo(px - 20, py + 14);
+  ctx.lineTo(px - 8, py + 10);
+  ctx.closePath();
+  ctx.fill();
+
+  // Right wing
+  ctx.beginPath();
+  ctx.moveTo(px + 8, py - 2);
+  ctx.lineTo(px + 20, py + 10);
+  ctx.lineTo(px + 20, py + 14);
+  ctx.lineTo(px + 8, py + 10);
+  ctx.closePath();
+  ctx.fill();
+
+  // Wing tips
+  ctx.fillStyle = '#0ff';
+  ctx.fillRect(px - 21, py + 8, 3, 7);
+  ctx.fillRect(px + 18, py + 8, 3, 7);
+
+  // Cockpit canopy
+  ctx.fillStyle = '#aef';
+  ctx.beginPath();
+  ctx.moveTo(px, py - 16);
+  ctx.lineTo(px - 4, py - 4);
+  ctx.lineTo(px + 4, py - 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cockpit glint
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.moveTo(px - 1, py - 14);
+  ctx.lineTo(px - 3, py - 6);
+  ctx.lineTo(px, py - 7);
+  ctx.closePath();
+  ctx.fill();
+
+  // Panel line down fuselage
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px, py - 4);
+  ctx.lineTo(px, py + 12);
+  ctx.stroke();
+
+  // Engine nacelles
+  ctx.fillStyle = '#099';
+  ctx.fillRect(px - 7, py + 10, 5, 4);
+  ctx.fillRect(px + 2, py + 10, 5, 4);
+
+  // Engine flames (dual)
+  const flicker = Math.sin(t * 20) * 3;
+  const flicker2 = Math.cos(t * 25) * 2;
+  ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(px - 7, py + 14);
+  ctx.lineTo(px - 4.5, py + 22 + flicker);
+  ctx.lineTo(px - 2, py + 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(px + 2, py + 14);
+  ctx.lineTo(px + 4.5, py + 22 + flicker2);
+  ctx.lineTo(px + 7, py + 14);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner flame glow
+  ctx.fillStyle = 'rgba(180, 255, 255, 0.7)';
+  ctx.beginPath();
+  ctx.moveTo(px - 6, py + 14);
+  ctx.lineTo(px - 4.5, py + 18 + flicker * 0.5);
+  ctx.lineTo(px - 3, py + 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(px + 3, py + 14);
+  ctx.lineTo(px + 4.5, py + 18 + flicker2 * 0.5);
+  ctx.lineTo(px + 7, py + 14);
   ctx.closePath();
   ctx.fill();
 }
@@ -935,8 +1020,8 @@ function updateDivingEnemies(dt) {
       // Check collision with player ship
       const dx = Math.abs(e.diveX - playerX);
       const dy = Math.abs(e.diveY - playerY);
-      const hitW = (e.type.width + 28) / 2;  // enemy half-width + ship half-width
-      const hitH = (e.type.height + 26) / 2;
+      const hitW = (e.type.width + 40) / 2;  // enemy half-width + ship half-width
+      const hitH = (e.type.height + 36) / 2;
       if (dx < hitW && dy < hitH) {
         // Hit the player
         lives--;
@@ -1060,7 +1145,7 @@ function fireMissile(targetLimbs) {
   const px = playerX;
 
   missiles.push({
-    x: px, y: playerY - 16,
+    x: px, y: playerY - 22,
     target,
     trail: [],
     alive: true,
